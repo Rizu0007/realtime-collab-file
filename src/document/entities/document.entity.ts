@@ -20,6 +20,22 @@ export class Document {
   @Column({ type: 'text', default: '' })
   content: string;
 
+  // File upload fields
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  fileName: string;
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  originalName: string;
+
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  mimeType: string;
+
+  @Column({ type: 'varchar', length: 500, nullable: true })
+  filePath: string;
+
+  @Column({ type: 'bigint', nullable: true })
+  fileSize: number;
+
   @Column({ name: 'owner_id' })
   ownerId: number;
 

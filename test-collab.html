@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Real-Time Collaboration Test</title>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 900px;
+      margin: 40px auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .card {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      margin-bottom: 20px;
+    }
+    h1, h2, h3 { margin-top: 0; color: #333; }
+    label { font-weight: 600; display: block; margin-bottom: 5px; }
+    input, textarea, select {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+      margin-bottom: 15px;
+    }
+    input[type="file"] { padding: 8px; }
+    textarea {
+      min-height: 300px;
+      font-family: monospace;
+      resize: vertical;
+    }
+    button {
+      background: #007bff;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      margin-right: 10px;
+    }
+    button:hover { background: #0056b3; }
+    button:disabled { background: #ccc; cursor: not-allowed; }
+    button.danger { background: #dc3545; }
+    button.danger:hover { background: #c82333; }
+    button.success { background: #28a745; }
+    button.success:hover { background: #218838; }
+    .status {
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 15px;
+    }
+    .status.connected { background: #d4edda; color: #155724; }
+    .status.disconnected { background: #f8d7da; color: #721c24; }
+    .users {
+      background: #e7f3ff;
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 15px;
+    }
+    .users span {
+      display: inline-block;
+      background: #007bff;
+      color: white;
+      padding: 3px 8px;
+      border-radius: 12px;
+      margin: 2px;
+      font-size: 12px;
+    }
+    .info { color: #666; font-size: 13px; }
+    .file-info {
+      background: #fff3cd;
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 15px;
+    }
+    .tabs {
+      display: flex;
+      border-bottom: 2px solid #ddd;
+      margin-bottom: 20px;
+    }
+    .tab {
+      padding: 10px 20px;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
+    }
+    .tab.active {
+      border-bottom-color: #007bff;
+      color: #007bff;
+      font-weight: 600;
+    }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    pre {
+      background: #f4f4f4;
+      padding: 10px;
+      border-radius: 4px;
+      overflow-x: auto;
+      font-size: 12px;
+    }
+    .doc-list {
+      max-height: 200px;
+      overflow-y: auto;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+    }
+    .doc-item {
+      padding: 10px;
+      border-bottom: 1px solid #eee;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .doc-item:hover { background: #f5f5f5; }
+    .doc-item:last-child { border-bottom: none; }
+    .doc-item .title { font-weight: 600; }
+    .doc-item .meta { font-size: 12px; color: #666; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Real-Time Document Collaboration</h1>
+    <div id="connectionStatus" class="status disconnected">Disconnected</div>
+
+    <div class="tabs">
+      <div class="tab active" onclick="showTab('upload')">Upload File</div>
+      <div class="tab" onclick="showTab('browse')">Browse Documents</div>
+      <div class="tab" onclick="showTab('create')">Create Text Doc</div>
+    </div>
+
+    <!-- Upload File Tab -->
+    <div id="tab-upload" class="tab-content active">
+      <h3>Upload a File</h3>
+      <label for="uploadFile">Select File:</label>
+      <input type="file" id="uploadFile">
+
+      <label for="uploadTitle">Document Title (optional):</label>
+      <input type="text" id="uploadTitle" placeholder="Leave empty to use filename">
+
+      <label for="uploadOwner">Owner ID:</label>
+      <input type="number" id="uploadOwner" value="1" min="1">
+
+      <button class="success" onclick="uploadFile()">Upload File</button>
+    </div>
+
+    <!-- Browse Documents Tab -->
+    <div id="tab-browse" class="tab-content">
+      <h3>Your Documents</h3>
+      <button onclick="loadDocuments()" style="margin-bottom: 15px;">Refresh List</button>
+      <div id="documentList" class="doc-list">
+        <div style="padding: 20px; text-align: center; color: #666;">Click "Refresh List" to load documents</div>
+      </div>
+    </div>
+
+    <!-- Create Text Doc Tab -->
+    <div id="tab-create" class="tab-content">
+      <h3>Create Text Document</h3>
+      <label for="createTitle">Title:</label>
+      <input type="text" id="createTitle" placeholder="Document title">
+
+      <label for="createContent">Initial Content:</label>
+      <textarea id="createContent" rows="5" placeholder="Enter initial content..."></textarea>
+
+      <label for="createOwner">Owner ID:</label>
+      <input type="number" id="createOwner" value="1" min="1">
+
+      <button class="success" onclick="createDocument()">Create Document</button>
+    </div>
+  </div>
+
+  <!-- Editor Card (shown after joining a document) -->
+  <div class="card" id="editorCard" style="display:none;">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+      <h2 id="docTitle">Document Title</h2>
+      <button class="danger" onclick="leaveDocument()">Leave Document</button>
+    </div>
+
+    <div id="fileInfo" class="file-info" style="display:none;">
+      <strong>Attached File:</strong> <span id="fileName"></span>
+      <br><small>Size: <span id="fileSize"></span> | Type: <span id="fileType"></span></small>
+      <br><button onclick="downloadFile()" style="margin-top:10px;">Download File</button>
+    </div>
+
+    <div class="users">
+      <strong>Active Users:</strong> <span id="activeUsers">None</span>
+    </div>
+
+    <label for="editor">Content:</label>
+    <textarea id="editor" placeholder="Start typing..."></textarea>
+
+    <p class="info">Changes are saved automatically and synced in real-time.</p>
+  </div>
+
+  <!-- Instructions -->
+  <div class="card">
+    <h3>Quick Start</h3>
+    <ol>
+      <li>Start your NestJS server: <code>npm run start:dev</code></li>
+      <li>Create a user first (if not exists):
+        <pre>curl -X POST http://localhost:3000/user -H "Content-Type: application/json" -d '{"name":"Test","username":"test","email":"t@t.com","age":25,"gender":"m","password":"Test@123!"}'</pre>
+      </li>
+      <li>Use "Upload File" tab to upload a document, or "Create Text Doc" for text-only</li>
+      <li>Use "Browse Documents" to see all documents and join one</li>
+      <li>Open this page in another browser tab to test real-time sync!</li>
+    </ol>
+  </div>
+
+  <script>
+    const API_URL = 'http://localhost:3000';
+    let socket = null;
+    let currentDocId = null;
+    let currentUserId = null;
+    let isRemoteUpdate = false;
+
+    // Tab switching
+    function showTab(tabName) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+      document.querySelector(`.tab[onclick="showTab('${tabName}')"]`).classList.add('active');
+      document.getElementById(`tab-${tabName}`).classList.add('active');
+    }
+
+    // Connect to socket server
+    function connect() {
+      socket = io(API_URL);
+
+      socket.on('connect', () => {
+        document.getElementById('connectionStatus').className = 'status connected';
+        document.getElementById('connectionStatus').textContent = 'Connected to server';
+      });
+
+      socket.on('disconnect', () => {
+        document.getElementById('connectionStatus').className = 'status disconnected';
+        document.getElementById('connectionStatus').textContent = 'Disconnected from server';
+      });
+
+      socket.on('document-loaded', (data) => {
+        document.getElementById('docTitle').textContent = data.title;
+        document.getElementById('editor').value = data.content || '';
+        document.getElementById('editorCard').style.display = 'block';
+
+        // Show file info if exists
+        if (data.fileName) {
+          document.getElementById('fileInfo').style.display = 'block';
+          document.getElementById('fileName').textContent = data.originalName || data.fileName;
+          document.getElementById('fileSize').textContent = formatFileSize(data.fileSize);
+          document.getElementById('fileType').textContent = data.mimeType || 'Unknown';
+        } else {
+          document.getElementById('fileInfo').style.display = 'none';
+        }
+      });
+
+      socket.on('content-updated', (data) => {
+        if (data.userId !== currentUserId) {
+          isRemoteUpdate = true;
+          const editor = document.getElementById('editor');
+          const cursorPos = editor.selectionStart;
+          editor.value = data.content;
+          editor.selectionStart = editor.selectionEnd = cursorPos;
+          isRemoteUpdate = false;
+        }
+      });
+
+      socket.on('active-users', (data) => {
+        const usersEl = document.getElementById('activeUsers');
+        if (data.users.length === 0) {
+          usersEl.innerHTML = 'None';
+        } else {
+          usersEl.innerHTML = data.users.map(u => `<span>${u.userName}</span>`).join('');
+        }
+      });
+
+      socket.on('error', (data) => {
+        alert('Error: ' + data.message);
+      });
+    }
+
+    // Upload file
+    async function uploadFile() {
+      const fileInput = document.getElementById('uploadFile');
+      const title = document.getElementById('uploadTitle').value;
+      const ownerId = document.getElementById('uploadOwner').value;
+
+      if (!fileInput.files[0]) {
+        alert('Please select a file');
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('file', fileInput.files[0]);
+      formData.append('ownerId', ownerId);
+      if (title) formData.append('title', title);
+
+      try {
+        const res = await fetch(`${API_URL}/documents/upload`, {
+          method: 'POST',
+          body: formData
+        });
+        const data = await res.json();
+        alert('File uploaded! Document ID: ' + data.id);
+        fileInput.value = '';
+        loadDocuments();
+        showTab('browse');
+      } catch (err) {
+        alert('Upload failed: ' + err.message);
+      }
+    }
+
+    // Create text document
+    async function createDocument() {
+      const title = document.getElementById('createTitle').value;
+      const content = document.getElementById('createContent').value;
+      const ownerId = document.getElementById('createOwner').value;
+
+      if (!title) {
+        alert('Please enter a title');
+        return;
+      }
+
+      try {
+        const res = await fetch(`${API_URL}/documents`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, content, ownerId: parseInt(ownerId) })
+        });
+        const data = await res.json();
+        alert('Document created! ID: ' + data.id);
+        document.getElementById('createTitle').value = '';
+        document.getElementById('createContent').value = '';
+        loadDocuments();
+        showTab('browse');
+      } catch (err) {
+        alert('Create failed: ' + err.message);
+      }
+    }
+
+    // Load all documents
+    async function loadDocuments() {
+      try {
+        const res = await fetch(`${API_URL}/documents`);
+        const docs = await res.json();
+        const listEl = document.getElementById('documentList');
+
+        if (docs.length === 0) {
+          listEl.innerHTML = '<div style="padding: 20px; text-align: center; color: #666;">No documents yet</div>';
+          return;
+        }
+
+        listEl.innerHTML = docs.map(doc => `
+          <div class="doc-item" onclick="joinDocument('${doc.id}')">
+            <div>
+              <div class="title">${doc.title}</div>
+              <div class="meta">${doc.fileName ? '📎 ' + doc.originalName : '📝 Text document'}</div>
+            </div>
+            <div class="meta">${new Date(doc.createdAt).toLocaleDateString()}</div>
+          </div>
+        `).join('');
+      } catch (err) {
+        document.getElementById('documentList').innerHTML = '<div style="padding: 20px; text-align: center; color: #c00;">Failed to load documents</div>';
+      }
+    }
+
+    // Join document for collaboration
+    function joinDocument(docId) {
+      const userName = prompt('Enter your name:', 'User ' + Math.random().toString(36).substr(2, 4));
+      if (!userName) return;
+
+      currentDocId = docId;
+      currentUserId = 'user-' + Math.random().toString(36).substr(2, 9);
+
+      socket.emit('join-document', {
+        documentId: docId,
+        userId: currentUserId,
+        userName: userName
+      });
+    }
+
+    // Leave document
+    function leaveDocument() {
+      if (currentDocId && currentUserId) {
+        socket.emit('leave-document', {
+          documentId: currentDocId,
+          userId: currentUserId
+        });
+      }
+
+      currentDocId = null;
+      currentUserId = null;
+      document.getElementById('editorCard').style.display = 'none';
+    }
+
+    // Download file
+    function downloadFile() {
+      if (currentDocId) {
+        window.open(`${API_URL}/documents/${currentDocId}/download`, '_blank');
+      }
+    }
+
+    // Format file size
+    function formatFileSize(bytes) {
+      if (!bytes) return 'Unknown';
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    // Handle editor input
+    document.getElementById('editor').addEventListener('input', (e) => {
+      if (!isRemoteUpdate && currentDocId && currentUserId) {
+        socket.emit('content-change', {
+          documentId: currentDocId,
+          userId: currentUserId,
+          content: e.target.value
+        });
+      }
+    });
+
+    // Connect on page load
+    connect();
+  </script>
+</body>
+</html>

@@ -88,6 +88,10 @@ export class CollaborationGateway
         id: document.id,
         title: document.title,
         content: document.content,
+        fileName: document.fileName,
+        originalName: document.originalName,
+        mimeType: document.mimeType,
+        fileSize: document.fileSize,
       });
 
       this.broadcastActiveUsers(documentId);

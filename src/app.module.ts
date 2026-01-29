@@ -6,8 +6,6 @@ import { AppService } from './app.service';
 import { UserModule } from './user/user.module';
 import { DocumentModule } from './document/document.module';
 import { CollaborationGateway } from './collaboration/collaboration.gateway';
-import { DocumentService } from './document/document.service';
-import { Document } from './document/entities/document.entity';
 
 @Module({
   imports: [
@@ -29,11 +27,10 @@ import { Document } from './document/entities/document.entity';
       }),
       inject: [ConfigService],
     }),
-    TypeOrmModule.forFeature([Document]),
     UserModule,
     DocumentModule,
   ],
   controllers: [AppController],
-  providers: [AppService, CollaborationGateway, DocumentService],
+  providers: [AppService, CollaborationGateway],
 })
 export class AppModule {}
