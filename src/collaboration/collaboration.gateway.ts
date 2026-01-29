@@ -8,10 +8,17 @@ import {
   ConnectedSocket,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
+import { DocumentService } from '../document/document.service';
+
+interface ActiveUser {
+  socketId: string;
+  userId: string;
+  userName: string;
+}
 
 @WebSocketGateway({
   cors: {
-    origin: '*', // Configure properly in production
+    origin: '*',
   },
 })
 export class CollaborationGateway
@@ -20,10 +27,17 @@ export class CollaborationGateway
   @WebSocketServer()
   server: Server;
 
-  // Store active users per document
-  private activeUsers = new Map<string, Set<string>>();
-  // Store document content
-  private documents = new Map<string, string>();
+  // Store active users per document: Map<documentId, Map<userId, ActiveUser>>
+  private activeUsers = new Map<string, Map<string, ActiveUser>>();
+
+  // Store socket to user mapping for cleanup on disconnect
+  private socketToUser = new Map<string, { visitorId: string; documentId: string }>();
+
+  // Debounce timers for saving content
+  private saveTimers = new Map<string, NodeJS.Timeout>();
+  private pendingContent = new Map<string, string>();
+
+  constructor(private readonly documentService: DocumentService) {}
 
   handleConnection(client: Socket) {
     console.log(`Client connected: ${client.id}`);
@@ -31,37 +45,58 @@ export class CollaborationGateway
 
   handleDisconnect(client: Socket) {
     console.log(`Client disconnected: ${client.id}`);
-    // Remove user from all documents
-    this.activeUsers.forEach((users, documentId) => {
-      users.delete(client.id);
-      this.broadcastActiveUsers(documentId);
-    });
+
+    const userInfo = this.socketToUser.get(client.id);
+    if (userInfo) {
+      const { visitorId, documentId } = userInfo;
+      const users = this.activeUsers.get(documentId);
+      if (users) {
+        users.delete(visitorId);
+        if (users.size === 0) {
+          this.activeUsers.delete(documentId);
+        }
+        this.broadcastActiveUsers(documentId);
+      }
+      this.socketToUser.delete(client.id);
+    }
   }
 
   @SubscribeMessage('join-document')
-  handleJoinDocument(
-    @MessageBody() data: { documentId: string; userId: string },
+  async handleJoinDocument(
+    @MessageBody() data: { documentId: string; userId: string; userName: string },
     @ConnectedSocket() client: Socket,
   ) {
-    const { documentId, userId } = data;
+    const { documentId, userId, userName } = data;
 
-    // Join the room
-    client.join(documentId);
+    try {
+      const document = await this.documentService.findOne(documentId);
 
-    // Add user to active users
-    if (!this.activeUsers.has(documentId)) {
-      this.activeUsers.set(documentId, new Set());
+      client.join(documentId);
+
+      if (!this.activeUsers.has(documentId)) {
+        this.activeUsers.set(documentId, new Map());
+      }
+      this.activeUsers.get(documentId)?.set(userId, {
+        socketId: client.id,
+        userId,
+        userName,
+      });
+
+      this.socketToUser.set(client.id, { visitorId: userId, documentId });
+
+      client.emit('document-loaded', {
+        id: document.id,
+        title: document.title,
+        content: document.content,
+      });
+
+      this.broadcastActiveUsers(documentId);
+
+      return { success: true };
+    } catch (error) {
+      client.emit('error', { message: error.message });
+      return { success: false, error: error.message };
     }
-    this.activeUsers.get(documentId)?.add(userId);
-
-    // Send current document content
-    const content = this.documents.get(documentId) || '';
-    client.emit('document-content', { content });
-
-    // Broadcast active users
-    this.broadcastActiveUsers(documentId);
-
-    return { success: true };
   }
 
   @SubscribeMessage('leave-document')
@@ -76,8 +111,15 @@ export class CollaborationGateway
     const users = this.activeUsers.get(documentId);
     if (users) {
       users.delete(userId);
+      if (users.size === 0) {
+        this.activeUsers.delete(documentId);
+      }
       this.broadcastActiveUsers(documentId);
     }
+
+    this.socketToUser.delete(client.id);
+
+    return { success: true };
   }
 
   @SubscribeMessage('content-change')
@@ -86,45 +128,75 @@ export class CollaborationGateway
     data: {
       documentId: string;
       userId: string;
-      changes: any; // The changes made
-      content: string; // Full content
+      content: string;
+      cursorPosition?: number;
     },
     @ConnectedSocket() client: Socket,
   ) {
-    const { documentId, userId, changes, content } = data;
+    const { documentId, userId, content, cursorPosition } = data;
 
-    // Store the content
-    this.documents.set(documentId, content);
+    // Store pending content for debounced save
+    this.pendingContent.set(documentId, content);
 
-    // Broadcast to all other users in the document
+    // Clear existing timer
+    const existingTimer = this.saveTimers.get(documentId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+    }
+
+    // Debounced save - saves after 1 second of no changes
+    const timer = setTimeout(async () => {
+      const contentToSave = this.pendingContent.get(documentId);
+      if (contentToSave !== undefined) {
+        try {
+          await this.documentService.updateContent(documentId, contentToSave);
+          console.log(`Document ${documentId} saved`);
+        } catch (error) {
+          console.error(`Failed to save document ${documentId}:`, error.message);
+        }
+        this.pendingContent.delete(documentId);
+      }
+      this.saveTimers.delete(documentId);
+    }, 1000);
+
+    this.saveTimers.set(documentId, timer);
+
+    // Broadcast immediately to other users
     client.to(documentId).emit('content-updated', {
       userId,
-      changes,
       content,
+      cursorPosition,
     });
   }
 
-  @SubscribeMessage('cursor-position')
-  handleCursorPosition(
+  @SubscribeMessage('cursor-move')
+  handleCursorMove(
     @MessageBody()
     data: {
       documentId: string;
       userId: string;
-      position: number;
       userName: string;
+      position: number;
+      selection?: { start: number; end: number };
     },
     @ConnectedSocket() client: Socket,
   ) {
-    // Broadcast cursor position to other users
     client.to(data.documentId).emit('cursor-moved', {
       userId: data.userId,
-      position: data.position,
       userName: data.userName,
+      position: data.position,
+      selection: data.selection,
     });
   }
 
   private broadcastActiveUsers(documentId: string) {
-    const users = Array.from(this.activeUsers.get(documentId) || []);
+    const usersMap = this.activeUsers.get(documentId);
+    const users = usersMap
+      ? Array.from(usersMap.values()).map(({ userId, userName }) => ({
+          userId,
+          userName,
+        }))
+      : [];
     this.server.to(documentId).emit('active-users', { users });
   }
 }
