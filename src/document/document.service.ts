@@ -19,7 +19,6 @@ export class DocumentService {
     return this.documentRepository.save(document);
   }
 
-  // Create document with file upload
   async createWithFile(
     file: Express.Multer.File,
     data: { title: string; ownerId: number },
