@@ -11,6 +11,10 @@ import {
   UploadedFile,
   Res,
   NotFoundException,
+  BadRequestException,
+  ParseFilePipe,
+  MaxFileSizeValidator,
+  FileTypeValidator,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
@@ -19,7 +23,22 @@ import { extname, join } from 'path';
 import { DocumentService } from './document.service';
 import { CreateDocumentDto } from './dto/create-document.dto';
 import { UpdateDocumentDto } from './dto/update-document.dto';
+import { UploadDocumentDto } from './dto/upload-document.dto';
 import { existsSync } from 'fs';
+
+// Allowed file types for upload
+const ALLOWED_MIME_TYPES = [
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'text/plain',
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+];
+
+// Max file size: 10MB
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
 
 // Multer config for file storage
 const storage = diskStorage({
@@ -30,6 +49,24 @@ const storage = diskStorage({
     callback(null, `${uniqueSuffix}${ext}`);
   },
 });
+
+// File filter to validate mime types
+const fileFilter = (
+  req: Express.Request,
+  file: Express.Multer.File,
+  callback: (error: Error | null, acceptFile: boolean) => void,
+) => {
+  if (ALLOWED_MIME_TYPES.includes(file.mimetype)) {
+    callback(null, true);
+  } else {
+    callback(
+      new BadRequestException(
+        `Invalid file type. Allowed types: ${ALLOWED_MIME_TYPES.join(', ')}`,
+      ),
+      false,
+    );
+  }
+};
 
 @Controller('documents')
 export class DocumentController {
@@ -42,10 +79,19 @@ export class DocumentController {
 
   // Upload file and create document
   @Post('upload')
-  @UseInterceptors(FileInterceptor('file', { storage }))
+  @UseInterceptors(FileInterceptor('file', { storage, fileFilter }))
   uploadFile(
-    @UploadedFile() file: Express.Multer.File,
-    @Body() body: { title?: string; ownerId: string },
+    @UploadedFile(
+      new ParseFilePipe({
+        validators: [
+          new MaxFileSizeValidator({ maxSize: MAX_FILE_SIZE }),
+          new FileTypeValidator({ fileType: new RegExp(ALLOWED_MIME_TYPES.map(t => t.replace('/', '\\/')).join('|')) }),
+        ],
+        fileIsRequired: true,
+      }),
+    )
+    file: Express.Multer.File,
+    @Body() body: UploadDocumentDto,
   ) {
     return this.documentService.createWithFile(file, {
       title: body.title || file.originalname,
@@ -55,10 +101,19 @@ export class DocumentController {
 
   // Upload/replace file for existing document
   @Patch(':id/upload')
-  @UseInterceptors(FileInterceptor('file', { storage }))
+  @UseInterceptors(FileInterceptor('file', { storage, fileFilter }))
   updateFile(
     @Param('id', ParseUUIDPipe) id: string,
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFile(
+      new ParseFilePipe({
+        validators: [
+          new MaxFileSizeValidator({ maxSize: MAX_FILE_SIZE }),
+          new FileTypeValidator({ fileType: new RegExp(ALLOWED_MIME_TYPES.map(t => t.replace('/', '\\/')).join('|')) }),
+        ],
+        fileIsRequired: true,
+      }),
+    )
+    file: Express.Multer.File,
   ) {
     return this.documentService.updateFile(id, file);
   }
